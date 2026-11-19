@@ -26,7 +26,7 @@ Telegram-бот: пишешь название песни или исполни�
 sudo apt update && sudo apt install -y ffmpeg git
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. Код (репо приватный: нужен gh auth login или deploy key)
+# 2. Код
 git clone https://github.com/touchfalls/find-music-bot.git ~/find-music-bot
 cd ~/find-music-bot && uv sync --no-dev
 echo 'BOT_TOKEN=...' > .env && chmod 600 .env
