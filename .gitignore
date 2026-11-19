@@ -3,3 +3,4 @@
 cache.db
 __pycache__/
 .pytest_cache/
+bot.log
