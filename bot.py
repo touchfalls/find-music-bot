@@ -94,7 +94,10 @@ class TooBig(Exception):
 
 
 async def send_track(bot: Bot, chat_id: int, video_id: str, info: dict | None) -> Message:
-    """Скачать трек и отправить в chat_id."""
+    """Отправить трек в chat_id: из кэша file_id мгновенно, иначе скачать и запомнить file_id."""
+    row = db.execute("SELECT file_id FROM tracks WHERE video_id = ?", (video_id,)).fetchone()
+    if row:
+        return await bot.send_audio(chat_id, row[0])
     async with ChatActionSender.upload_document(bot=bot, chat_id=chat_id):
         with tempfile.TemporaryDirectory() as tmp:
             path = await asyncio.to_thread(music.download, video_id, tmp)
@@ -104,7 +107,10 @@ async def send_track(bot: Bot, chat_id: int, video_id: str, info: dict | None) -
             if info:  # без info (после рестарта) Telegram возьмёт название и артиста из ID3-тегов
                 extra = dict(title=info["title"], performer=info["artist"], duration=info["duration_s"],
                              thumbnail=URLInputFile(info["thumb"]) if info["thumb"] else None)
-            return await bot.send_audio(chat_id, FSInputFile(path), request_timeout=300, **extra)
+            msg = await bot.send_audio(chat_id, FSInputFile(path), request_timeout=300, **extra)
+    db.execute("INSERT OR REPLACE INTO tracks VALUES (?, ?)", (video_id, msg.audio.file_id))
+    db.commit()
+    return msg
 
 
 @auth.callback_query(F.data.startswith("dl:"))
@@ -135,6 +141,7 @@ async def main():
         raise SystemExit("INVITE_CODE: 8-64 символа A-Za-z0-9_- (см. README)")
     db = sqlite3.connect(DB_PATH)
     db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
+    db.execute("CREATE TABLE IF NOT EXISTS tracks (video_id TEXT PRIMARY KEY, file_id TEXT NOT NULL)")
     allowed.update(uid for (uid,) in db.execute("SELECT user_id FROM users"))
 
     bot = Bot(os.environ["BOT_TOKEN"])
