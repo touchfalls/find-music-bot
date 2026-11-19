@@ -4,15 +4,19 @@ import os
 import re
 import secrets
 import sqlite3
+import tempfile
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandObject, CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+                           URLInputFile)
+from aiogram.utils.chat_action import ChatActionSender
 
 import music
 
 PAGE_SIZE = 10
+MAX_UPLOAD = 50 * 1024 * 1024  # лимит Bot API на отправку файла
 DB_PATH = Path(__file__).with_name("cache.db")
 
 db: sqlite3.Connection
@@ -83,6 +87,39 @@ async def on_page(c: CallbackQuery):
         return await c.answer("Поиск устарел, повтори запрос", show_alert=True)
     await c.message.edit_reply_markup(reply_markup=build_keyboard(items, int(c.data[3:])))
     await c.answer()
+
+
+class TooBig(Exception):
+    pass
+
+
+async def send_track(bot: Bot, chat_id: int, video_id: str, info: dict | None) -> Message:
+    """Скачать трек и отправить в chat_id."""
+    async with ChatActionSender.upload_document(bot=bot, chat_id=chat_id):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = await asyncio.to_thread(music.download, video_id, tmp)
+            if path.stat().st_size > MAX_UPLOAD:
+                raise TooBig
+            extra = {}
+            if info:  # без info (после рестарта) Telegram возьмёт название и артиста из ID3-тегов
+                extra = dict(title=info["title"], performer=info["artist"], duration=info["duration_s"],
+                             thumbnail=URLInputFile(info["thumb"]) if info["thumb"] else None)
+            return await bot.send_audio(chat_id, FSInputFile(path), request_timeout=300, **extra)
+
+
+@auth.callback_query(F.data.startswith("dl:"))
+async def on_download(c: CallbackQuery):
+    await c.answer()
+    vid = c.data[3:]
+    items = results.get((c.message.chat.id, c.message.message_id), [])
+    info = next((t for t in items if t["video_id"] == vid), None)
+    try:
+        await send_track(c.bot, c.message.chat.id, vid, info)
+    except TooBig:
+        await c.message.answer("Файл больше 50 МБ, Telegram не даст его отправить")
+    except Exception:
+        logging.exception("download failed: %s", vid)
+        await c.message.answer("Не получилось скачать этот трек 😔")
 
 
 @auth.callback_query(F.data == "noop")
