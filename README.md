@@ -40,6 +40,17 @@ journalctl -u find-music-bot -f   # логи
 - **Перед запуском на VPS останови бота на маке**: два процесса с одним токеном конфликтуют (`TelegramConflictError`).
 - Кэш можно перенести, чтобы скачанные треки уходили сразу: `scp cache.db USER@VPS:~/find-music-bot/` (до `systemctl start`).
 - Обновление: `cd ~/find-music-bot && git pull && uv sync --no-dev && sudo systemctl restart find-music-bot`.
-- YouTube иногда блокирует IP дата-центров («Sign in to confirm you're not a bot»). Если в логах такое, нужны cookies от YouTube-аккаунта: пиши, добавим.
+- YouTube иногда блокирует IP дата-центров («Sign in to confirm you're not a bot»). Тогда положи рядом с `bot.py` файл `cookies.txt` (см. ниже) и перезапусти сервис.
+
+## Cookies YouTube (на случай блокировки)
+Если рядом с `bot.py` лежит `cookies.txt`, yt-dlp качает от имени этого аккаунта. Файла нет — качает анонимно. `cookies.txt` в `.gitignore`: это доступ к аккаунту, никому его не показывай.
+
+1. Заведи **отдельный** Google-аккаунт: YouTube может забанить аккаунт, через который массово качают.
+2. Открой **приватное окно** браузера, войди в этот аккаунт на youtube.com.
+3. В том же окне на `youtube.com/robots.txt` выгрузи cookies расширением «Get cookies.txt LOCALLY» (формат Netscape) в `cookies.txt`.
+4. **Закрой приватное окно, не выходя из аккаунта**: иначе YouTube обновит cookies и выгруженные перестанут работать.
+5. `scp cookies.txt USER@VPS:~/find-music-bot/ && ssh USER@VPS 'chmod 600 ~/find-music-bot/cookies.txt && sudo systemctl restart find-music-bot'`
+
+Cookies со временем протухают; если блокировка вернулась, повтори шаги 2–5.
 
 Если YouTube перестал отдавать треки, обнови yt-dlp: `uv lock --upgrade-package yt-dlp && uv sync`.

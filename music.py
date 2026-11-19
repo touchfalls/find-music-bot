@@ -5,6 +5,8 @@ from pathlib import Path
 import yt_dlp
 from ytmusicapi import YTMusic
 
+# cookies YouTube-аккаунта (формат Netscape): нужны, если YouTube блокирует IP сервера. Нет файла — качаем без них
+COOKIES = Path(__file__).with_name("cookies.txt")
 MAX_DURATION_S = 15 * 60  # длиннее не влезет в лимит бота 50 МБ при 320 kbps
 
 _yt = YTMusic()
@@ -48,6 +50,8 @@ def download(video_id: str, dest_dir: str) -> Path:
         # превью YouTube 16:9 с обложкой по центру, режем до квадрата
         "postprocessor_args": {"thumbnailsconvertor": ["-vf", "crop=ih:ih"]},
     }
+    if COOKIES.exists():
+        opts["cookiefile"] = str(COOKIES)
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([f"https://music.youtube.com/watch?v={video_id}"])
     return Path(dest_dir, f"{video_id}.mp3")
