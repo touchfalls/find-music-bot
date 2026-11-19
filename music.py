@@ -39,7 +39,6 @@ def download(video_id: str, dest_dir: str) -> Path:
         "writethumbnail": True,
         "quiet": True,
         "noprogress": True,
-        "js_runtimes": {"node": {}},  # YouTube требует JS-runtime; node уже стоит
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"},
             {"key": "FFmpegMetadata"},

@@ -1,0 +1,15 @@
+# Замени USER на пользователя VPS, под которым живёт бот (см. README → «На VPS»).
+[Unit]
+Description=find-music-bot (Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=USER
+WorkingDirectory=/home/USER/find-music-bot
+ExecStart=/home/USER/.local/bin/uv run --no-dev --env-file .env bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

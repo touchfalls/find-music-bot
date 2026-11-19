@@ -1,14 +1,13 @@
 import asyncio
 import logging
 import os
-import re
-import secrets
 import sqlite3
 import tempfile
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import CommandObject, CommandStart
+from aiogram.exceptions import TelegramForbiddenError
+from aiogram.filters import CommandStart
 from aiogram.types import (BufferedInputFile, CallbackQuery, ChosenInlineResult, FSInputFile, InlineKeyboardButton,
                            InlineKeyboardMarkup, InlineQuery, InlineQueryResultCachedAudio,
                            InlineQueryResultCachedDocument, InputMediaAudio, Message, URLInputFile)
@@ -21,18 +20,12 @@ MAX_UPLOAD = 50 * 1024 * 1024  # лимит Bot API на отправку фай
 DB_PATH = Path(__file__).with_name("cache.db")
 
 db: sqlite3.Connection
-invite_code: str
-allowed: set[int] = set()  # кто вошёл по ссылке-приглашению; грузится из БД в main()
-# shortcut: результаты поиска живут в памяти и пропадают при рестарте; для семьи хватает, иначе хранить в SQLite
+downloads = asyncio.Semaphore(2)  # бот общий: не больше 2 скачиваний сразу, чтобы не забить VPS
+# shortcut: результаты поиска живут в памяти и пропадают при рестарте; при большой нагрузке хранить в SQLite
 results: dict[tuple[int, int], list[dict]] = {}
 known: dict[str, dict] = {}  # video_id -> название/артист/обложка из последних поисков
 
-public = Router()
-auth = Router()  # всё, кроме /start, только для вошедших; чужим бот молчит
-auth.message.filter(F.from_user.id.in_(allowed))
-auth.callback_query.filter(F.from_user.id.in_(allowed))
-auth.inline_query.filter(F.from_user.id.in_(allowed))
-auth.chosen_inline_result.filter(F.from_user.id.in_(allowed))
+router = Router()
 
 # кнопка нужна, иначе Telegram не даст inline_message_id и заглушку нельзя будет заменить на трек
 LOADING_KB = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⏳ Загружаю…", callback_data="noop")]])
@@ -62,19 +55,12 @@ def build_keyboard(items: list[dict], page: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@public.message(CommandStart())
-async def on_start(m: Message, command: CommandObject):
-    uid = m.from_user.id
-    if uid not in allowed:
-        if not command.args or not secrets.compare_digest(command.args.encode(), invite_code.encode()):
-            return
-        allowed.add(uid)
-        db.execute("INSERT OR IGNORE INTO users VALUES (?)", (uid,))
-        db.commit()
+@router.message(CommandStart())
+async def on_start(m: Message):
     await m.answer("Привет! Напиши название песни или исполнителя 🎵")
 
 
-@auth.message(F.text)
+@router.message(F.text)
 async def on_search(m: Message):
     try:
         items = await asyncio.to_thread(music.search, m.text)
@@ -88,7 +74,7 @@ async def on_search(m: Message):
     results[(sent.chat.id, sent.message_id)] = items
 
 
-@auth.callback_query(F.data.startswith("pg:"))
+@router.callback_query(F.data.startswith("pg:"))
 async def on_page(c: CallbackQuery):
     items = results.get((c.message.chat.id, c.message.message_id))
     if items is None:
@@ -105,7 +91,7 @@ async def send_track(bot: Bot, chat_id: int, video_id: str, info: dict | None) -
     """Отправить трек в chat_id: из кэша file_id мгновенно, иначе скачать и запомнить file_id."""
     if fid := cached_file_id(video_id):
         return await bot.send_audio(chat_id, fid)
-    async with ChatActionSender.upload_document(bot=bot, chat_id=chat_id):
+    async with downloads, ChatActionSender.upload_document(bot=bot, chat_id=chat_id):
         with tempfile.TemporaryDirectory() as tmp:
             path = await asyncio.to_thread(music.download, video_id, tmp)
             if path.stat().st_size > MAX_UPLOAD:
@@ -120,7 +106,7 @@ async def send_track(bot: Bot, chat_id: int, video_id: str, info: dict | None) -
     return msg
 
 
-@auth.callback_query(F.data.startswith("dl:"))
+@router.callback_query(F.data.startswith("dl:"))
 async def on_download(c: CallbackQuery):
     await c.answer()
     vid = c.data[3:]
@@ -150,7 +136,7 @@ async def placeholder_id(bot: Bot, user_id: int) -> str:
     return msg.document.file_id
 
 
-@auth.inline_query()
+@router.inline_query()
 async def on_inline(q: InlineQuery, bot: Bot):
     if not q.query.strip():
         return await q.answer([], cache_time=0)
@@ -173,7 +159,7 @@ async def on_inline(q: InlineQuery, bot: Bot):
     await q.answer(answer, is_personal=True, cache_time=10)
 
 
-@auth.chosen_inline_result()
+@router.chosen_inline_result()
 async def on_chosen(r: ChosenInlineResult, bot: Bot):
     if not r.inline_message_id:  # трек был в кэше и ушёл сразу аудио
         return
@@ -183,34 +169,31 @@ async def on_chosen(r: ChosenInlineResult, bot: Bot):
         await msg.delete()
         await bot.edit_message_media(inline_message_id=r.inline_message_id,
                                      media=InputMediaAudio(media=msg.audio.file_id))
+    except TelegramForbiddenError:  # пользователь ни разу не запускал бота, писать ему в личку нельзя
+        await bot.edit_message_caption(inline_message_id=r.inline_message_id,
+                                       caption=f"Открой @{(await bot.me()).username}, нажми «Старт» "
+                                               "и выбери трек ещё раз")
     except Exception:
         logging.exception("inline download failed: %s", r.result_id)
         await bot.edit_message_caption(inline_message_id=r.inline_message_id,
                                        caption="Не получилось загрузить трек 😔")
 
 
-@auth.callback_query(F.data == "noop")
+@router.callback_query(F.data == "noop")
 async def on_noop(c: CallbackQuery):
     await c.answer()
 
 
 async def main():
-    global db, invite_code
+    global db
     logging.basicConfig(level=logging.INFO)
-    invite_code = os.environ["INVITE_CODE"]
-    if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", invite_code):
-        raise SystemExit("INVITE_CODE: 8-64 символа A-Za-z0-9_- (см. README)")
     db = sqlite3.connect(DB_PATH)
-    db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
     db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     db.execute("CREATE TABLE IF NOT EXISTS tracks (video_id TEXT PRIMARY KEY, file_id TEXT NOT NULL)")
-    allowed.update(uid for (uid,) in db.execute("SELECT user_id FROM users"))
 
     bot = Bot(os.environ["BOT_TOKEN"])
-    me = await bot.get_me()
-    logging.info("Ссылка-приглашение: https://t.me/%s?start=%s", me.username, invite_code)
     dp = Dispatcher()
-    dp.include_routers(public, auth)
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 
