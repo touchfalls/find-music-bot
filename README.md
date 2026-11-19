@@ -14,7 +14,12 @@
 1. Создай бота у @BotFather (`/newbot`) и возьми токен.
 2. `cp .env.example .env`, впиши `BOT_TOKEN`, а в `INVITE_CODE` сгенерированный секрет:
    `python3 -c "import secrets; print(secrets.token_urlsafe(16))"`
-3. `uv run --env-file .env bot.py`
+3. Чтобы отправлять треки прямо в чат с другом (`@бот название`), включи у @BotFather:
+   `/setinline` (подсказка, например «Название песни…») и `/setinlinefeedback` → Enabled.
+4. `uv run --env-file .env bot.py`
+
+В inline-режиме трек, которого ещё нет в кэше, сначала уходит заглушкой «⏳ Загружаю…», и через несколько секунд бот подменяет её на MP3.
+Уже скачанные треки уходят сразу.
 
 Тесты: `uv run pytest`
 
