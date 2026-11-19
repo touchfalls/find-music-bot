@@ -18,28 +18,33 @@ Telegram-бот: пишешь название песни или исполни�
 Тесты: `uv run pytest`
 
 ## На VPS (рядом с другим ботом)
-Боты друг другу не мешают: у каждого свой токен, своя папка и свой systemd-сервис, порты не нужны (long polling).
-Ниже Ubuntu/Debian; `USER` — твой пользователь на VPS.
+Боты друг другу не мешают: у каждого свой токен, папка, пользователь и systemd-сервис; порты не нужны (long polling).
+Ниже Ubuntu 24.04, команды от root.
 
 ```bash
-# 1. Зависимости: ffmpeg из apt, uv; JS-runtime (deno) ставится сам вместе с yt-dlp
-sudo apt update && sudo apt install -y ffmpeg git
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# 1. Зависимости: ffmpeg и git из apt, uv; JS-runtime (deno) ставится сам вместе с yt-dlp
+apt update && apt install -y ffmpeg git
+curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
-# 2. Код
-git clone https://github.com/touchfalls/find-music-bot.git ~/find-music-bot
-cd ~/find-music-bot && uv sync --no-dev
-echo 'BOT_TOKEN=...' > .env && chmod 600 .env
+# 2. Отдельный пользователь и код
+useradd --system --create-home --home-dir /var/lib/musicbot --shell /usr/sbin/nologin musicbot
+git clone https://github.com/touchfalls/find-music-bot.git /opt/find-music-bot
+chown -R musicbot:musicbot /opt/find-music-bot
+cd /opt/find-music-bot && sudo -u musicbot uv sync --no-dev
+# .env (BOT_TOKEN=...) и, если есть, cache.db копируем с мака:
+#   scp .env cache.db root@VPS:/opt/find-music-bot/
+chown musicbot:musicbot .env cache.db; chmod 600 .env
 
 # 3. Сервис
-sed "s/USER/$USER/g" deploy/find-music-bot.service | sudo tee /etc/systemd/system/find-music-bot.service
-sudo systemctl daemon-reload && sudo systemctl enable --now find-music-bot
+cp deploy/find-music-bot.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now find-music-bot
 journalctl -u find-music-bot -f   # логи
 ```
 
 - **Перед запуском на VPS останови бота на маке**: два процесса с одним токеном конфликтуют (`TelegramConflictError`).
-- Кэш можно перенести, чтобы скачанные треки уходили сразу: `scp cache.db USER@VPS:~/find-music-bot/` (до `systemctl start`).
-- Обновление: `cd ~/find-music-bot && git pull && uv sync --no-dev && sudo systemctl restart find-music-bot`.
+- Сервис ограничен 450 МБ памяти (`MemoryMax`), чтобы не мешать соседям. На VPS с 1 ГБ без swap стоит добавить swap:
+  `fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab`
+- Обновление: `cd /opt/find-music-bot && sudo -u musicbot git pull && sudo -u musicbot uv sync --no-dev && systemctl restart find-music-bot`.
 - YouTube иногда блокирует IP дата-центров («Sign in to confirm you're not a bot»). Тогда положи рядом с `bot.py` файл `cookies.txt` (см. ниже) и перезапусти сервис.
 
 ## Cookies YouTube (на случай блокировки)
@@ -49,7 +54,7 @@ journalctl -u find-music-bot -f   # логи
 2. Открой **приватное окно** браузера, войди в этот аккаунт на youtube.com.
 3. В том же окне на `youtube.com/robots.txt` выгрузи cookies расширением «Get cookies.txt LOCALLY» (формат Netscape) в `cookies.txt`.
 4. **Закрой приватное окно, не выходя из аккаунта**: иначе YouTube обновит cookies и выгруженные перестанут работать.
-5. `scp cookies.txt USER@VPS:~/find-music-bot/ && ssh USER@VPS 'chmod 600 ~/find-music-bot/cookies.txt && sudo systemctl restart find-music-bot'`
+5. `scp cookies.txt root@VPS:/opt/find-music-bot/ && ssh root@VPS 'cd /opt/find-music-bot && chown musicbot:musicbot cookies.txt && chmod 600 cookies.txt && systemctl restart find-music-bot'`
 
 Cookies со временем протухают; если блокировка вернулась, повтори шаги 2–5.
 

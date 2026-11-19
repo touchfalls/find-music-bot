@@ -20,7 +20,7 @@ MAX_UPLOAD = 50 * 1024 * 1024  # лимит Bot API на отправку фай
 DB_PATH = Path(__file__).with_name("cache.db")
 
 db: sqlite3.Connection
-downloads = asyncio.Semaphore(2)  # бот общий: не больше 2 скачиваний сразу, чтобы не забить VPS
+downloads = asyncio.Semaphore(1)  # по одному скачиванию: VPS на 1 CPU, ffmpeg съедает его целиком
 # shortcut: результаты поиска живут в памяти и пропадают при рестарте; при большой нагрузке хранить в SQLite
 results: dict[tuple[int, int], list[dict]] = {}
 known: dict[str, dict] = {}  # video_id -> название/артист/обложка из последних поисков

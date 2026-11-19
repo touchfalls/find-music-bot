@@ -1,15 +1,20 @@
-# Замени USER на пользователя VPS, под которым живёт бот (см. README → «На VPS»).
+# Ставится по README → «На VPS»: код в /opt/find-music-bot, системный пользователь musicbot.
 [Unit]
 Description=find-music-bot (Telegram)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=USER
-WorkingDirectory=/home/USER/find-music-bot
-ExecStart=/home/USER/.local/bin/uv run --no-dev --env-file .env bot.py
+User=musicbot
+WorkingDirectory=/opt/find-music-bot
+EnvironmentFile=/opt/find-music-bot/.env
+# .venv/bin в PATH: там deno, без него yt-dlp не скачает с YouTube
+Environment=PATH=/opt/find-music-bot/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/find-music-bot/.venv/bin/python bot.py
 Restart=always
 RestartSec=5
+# не даём съесть память соседним сервисам на маленьком VPS
+MemoryMax=450M
 
 [Install]
 WantedBy=multi-user.target
