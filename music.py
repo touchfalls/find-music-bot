@@ -32,17 +32,18 @@ def search(query: str) -> list[dict]:
 
 
 def download(video_id: str, dest_dir: str) -> Path:
-    """MP3 320 с тегами и квадратной обложкой. Блокирующая: из бота звать через asyncio.to_thread."""
+    """M4A (оригинальный AAC с YouTube, без перекодирования) с тегами и квадратной обложкой. Блокирующая: из бота звать через asyncio.to_thread."""
     if not re.fullmatch(r"[\w-]{11}", video_id):  # id приходит из callback_data, её клиент может подделать
         raise ValueError(f"bad video id: {video_id!r}")
     opts = {
-        "format": "bestaudio/best",
+        # m4a (AAC) идёт без перекодирования: на 1 CPU это экономит ~20 с на трек; Telegram играет его как аудио
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": f"{dest_dir}/%(id)s.%(ext)s",
         "writethumbnail": True,
         "quiet": True,
         "noprogress": True,
         "postprocessors": [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"},
+            {"key": "FFmpegExtractAudio", "preferredcodec": "m4a"},  # AAC копируется как есть, иначе перекодируется
             {"key": "FFmpegMetadata"},
             {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
             {"key": "EmbedThumbnail"},
@@ -54,4 +55,4 @@ def download(video_id: str, dest_dir: str) -> Path:
         opts["cookiefile"] = str(COOKIES)
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([f"https://music.youtube.com/watch?v={video_id}"])
-    return Path(dest_dir, f"{video_id}.mp3")
+    return Path(dest_dir, f"{video_id}.m4a")
